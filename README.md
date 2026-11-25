@@ -45,16 +45,19 @@ flowchart LR
    components are of another kind gets `KindUnsupported` (MongoDB, for example).
 2. **Destination.** Holds the Releem API key in its credentials Secret (`APIKey` mode,
    key `apiKey`), the Releem region (`US` or `EU`) and an optional server name prefix.
-3. **Provider.** While a bound class requires connections, the provider creates the
-   read-only monitoring user and publishes its Instance-owned Secret under the `monitor`
-   credential profile, with a connection endpoint (pod selector, container, port, TLS). When
-   the last such binding goes, it drops the user and deletes the Secret.
+3. **Provider.** While a bound class requires connections, the provider makes sure the
+   monitoring user exists (CloudNativePG creates `openeverest_monitor`, a member of
+   `pg_monitor` and `pg_read_all_data`) and publishes its Instance-owned Secret under the
+   `monitor` credential profile, with a connection endpoint (pod selector, container, port,
+   TLS). When the last such binding goes, it drops the user and deletes the Secret.
 4. **Agents.** For every accepted binding, the controller applies one Deployment per running
    database pod, named `<binding>-<pod>` and owned by the binding. The agent connects to the
    pod's address directly, so Releem sees every server of the Instance. The API key and the
    database login reach it as `secretKeyRef` environment variables: the controller never reads
    a Secret. Agents follow pods: a new address re-renders the agent, a pod that is gone loses
-   its agent, and removing the Instance entry garbage-collects them all.
+   its agent, and removing the Instance entry garbage-collects them all. On PostgreSQL a
+   liveness probe logs in with the agent's own environment every minute: after a password
+   rotation it fails, and the restarted container reads the new password from the Secret.
 5. **Status.** The binding is `Configured` once every agent runs, `AgentNotReady` while one
    does not, and `EndpointNotServing` while the Instance publishes no connections.
 
@@ -115,9 +118,12 @@ No Releem account was available, so the API key was a placeholder.
 | Check | Result |
 |---|---|
 | Core computes compatibility with no core change | ✅ CNPG `ExtensionManaged`, `None`; PSMDB `KindUnsupported` |
-| Provider creates `openeverest_monitor` (member of `pg_monitor` only) as a CNPG managed role | ✅ Instance-owned `basic-auth` Secret, published under `monitor` |
+| Provider creates `openeverest_monitor` (`pg_monitor`, `pg_read_all_data`, 30 connections) as a CNPG managed role | ✅ Instance-owned `basic-auth` Secret, published under `monitor` |
 | Connection endpoint published with TLS required (`tls.mode: requireTLS`) | ✅ |
 | Agent logs in over TLS and collects from every database | ✅ `postgres` and `app` |
+| Instance scaled to 2 → one agent per instance, the replica's included | ✅ |
+| Query optimization EXPLAINs application queries; the monitor user cannot write | ✅ `permission denied` on `INSERT` |
+| Monitor password rotated in the Secret → CNPG applies it, agents keep their endpoints, the probe restarts them once, they log in with the new password | ✅ within 3 minutes |
 | Database pod recreated with a new IP → agent re-rendered | ✅ |
 | Entry removed → agents deleted, role dropped in PostgreSQL, Secret deleted, sources cleared | ✅ |
 | Entry added again → role re-created from `ensure: absent` | ✅ |
@@ -137,11 +143,12 @@ Footprint: the agent used 17 MiB, the controller 19 MiB.
    read the key, and the agent keeps running after a `403`, reporting it only in its log.
    Options: ask Releem for an agent health endpoint or a non-zero exit on an invalid key, or
    run a one-shot check Job per destination that uses the key by reference.
-3. **`pg_monitor` is not quite enough.** The agent wants `pg_hba_file_rules` (superuser-only
-   by default) and EXPLAINs queries that read `pg_authid`. CNPG managed roles cannot grant on
-   objects; the provider would need SQL for `GRANT SELECT ON pg_hba_file_rules`. Decide per
-   engine what the `monitor` profile includes, or add a second profile
-   (`monitor-queries`) for query optimization.
+3. **The monitor user reads data.** Query optimization EXPLAINs application queries, so
+   CloudNativePG grants `pg_read_all_data`, as the MySQL operators' monitor users have
+   `SELECT ON *.*` (openeverest/openeverest#3717 rewords the profile). Two misses remain and
+   are logged by the agent but harmless: `pg_hba_file_rules` stays superuser-only (CNPG managed
+   roles cannot grant on objects, and CNPG manages `pg_hba` itself), and queries reading
+   `pg_authid` cannot be EXPLAINed.
 4. **The agent does not verify TLS.** It uses `sslmode=require` (PostgreSQL) and
    `tls=skip-verify` (MySQL), so the published CA is unused. Ask Releem for a CA option.
 5. **Agents connect by pod IP**, so the controller watches pods. A per-pod DNS name in the

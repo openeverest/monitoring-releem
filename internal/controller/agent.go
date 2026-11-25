@@ -149,10 +149,11 @@ func agentFor(in agentInput, opts agentOptions) (*appsv1.Deployment, error) {
 					AutomountServiceAccountToken: new(false),
 					EnableServiceLinks:           new(false),
 					Containers: []corev1.Container{{
-						Name:      agentContainerName,
-						Image:     opts.Image,
-						Env:       env,
-						Resources: opts.Resources,
+						Name:          agentContainerName,
+						Image:         opts.Image,
+						Env:           env,
+						Resources:     opts.Resources,
+						LivenessProbe: loginProbe(family),
 					}},
 				},
 			},
@@ -207,6 +208,28 @@ func apiKeySecret(dst *monitoringv1alpha1.MonitoringDestination) (string, error)
 			dst.Name, AuthModeAPIKey)
 	}
 	return ref.Name, nil
+}
+
+// loginProbe logs in to the database with the agent's own environment. The
+// agent keeps its sessions across a password rotation and only fails on its
+// next reconnect; the probe fails as soon as the rotated password is in
+// effect, and the restarted container reads the new one from the Secret.
+// It is nil for MySQL, whose client options are not verified yet.
+func loginProbe(family engineFamily) *corev1.Probe {
+	if family != familyPostgreSQL {
+		return nil
+	}
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{
+			"sh", "-c",
+			`PGPASSWORD="$RELEEM_PG_PASSWORD" PGCONNECT_TIMEOUT=5 PGSSLMODE="$([ "$RELEEM_PG_SSL_MODE" = true ] && echo require || echo prefer)" ` +
+				`psql -h "$RELEEM_PG_HOST" -p "$RELEEM_PG_PORT" -U "$RELEEM_PG_LOGIN" -d postgres -tAc 'SELECT 1' >/dev/null`,
+		}}},
+		InitialDelaySeconds: 30,
+		PeriodSeconds:       60,
+		TimeoutSeconds:      10,
+		FailureThreshold:    3,
+	}
 }
 
 // resolvePort is the endpoint's container port number on pod.

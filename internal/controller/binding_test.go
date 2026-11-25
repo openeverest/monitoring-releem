@@ -224,6 +224,9 @@ func TestReconcileRunsOneAgentPerPostgreSQLPod(t *testing.T) {
 	assert.Equal(t, "EU", env["RELEEM_REGION"].Value)
 	assert.Equal(t, "true", env["RELEEM_QUERY_OPTIMIZATION"].Value)
 	assert.NotContains(t, env, "DB_HOST")
+	probe := agent.Spec.Template.Spec.Containers[0].LivenessProbe
+	require.NotNil(t, probe, "a rotated password restarts the agent")
+	assert.Contains(t, probe.Exec.Command[2], `-U "$RELEEM_PG_LOGIN"`)
 
 	cond := configured(t, c)
 	assert.Equal(t, string(monitoringv1alpha1.ReasonAgentNotReady), cond.Reason, "agents are not available yet")
@@ -256,6 +259,7 @@ func TestReconcileRendersMySQLAgents(t *testing.T) {
 	assert.Equal(t, "false", env["RELEEM_QUERY_OPTIMIZATION"].Value)
 	assert.NotContains(t, env, "RELEEM_REGION", "US is the agent's default")
 	assert.NotContains(t, env, "RELEEM_PG_HOST")
+	assert.Nil(t, liveAgents(t, c)[testBindingName+"-orders-1"].Spec.Template.Spec.Containers[0].LivenessProbe)
 }
 
 func TestReconcileFollowsThePods(t *testing.T) {
