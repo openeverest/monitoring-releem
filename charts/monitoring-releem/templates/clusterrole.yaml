@@ -1,0 +1,30 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "monitoring-releem.fullname" . }}
+  labels:
+    {{- include "monitoring-releem.labels" . | nindent 4 }}
+# A class controller reads the monitoring kinds and Instances and writes only
+# monitoring status. It never writes Instances or reads Secrets: agents get
+# the API key and the database login through secretKeyRef environment
+# variables.
+rules:
+  - apiGroups: [monitoring.openeverest.io]
+    resources: [monitoringclasses, monitoringdestinations, monitoringbindings]
+    verbs: [get, list, watch]
+  - apiGroups: [monitoring.openeverest.io]
+    resources: [monitoringclasses/status, monitoringdestinations/status, monitoringbindings/status]
+    verbs: [patch]
+  - apiGroups: [core.openeverest.io]
+    resources: [instances]
+    verbs: [get, list, watch]
+  # The database pods agents connect to, by address.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  # One agent per database pod of every binding.
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, create, patch, delete]
+{{- end }}

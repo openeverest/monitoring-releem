@@ -1,0 +1,86 @@
+{{- if .Values.class.create -}}
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringClass
+metadata:
+  name: {{ .Values.class.name }}
+  labels:
+    {{- include "monitoring-releem.labels" . | nindent 4 }}
+spec:
+  controllerName: {{ .Values.class.controllerName }}
+  displayName: {{ .Values.class.displayName }}
+  description: Runs a Releem agent for every database server of each Instance sending to a destination of this class, logging in with the Instance's read-only monitoring user. Recommendations are shown in Releem; OpenEverest applies no configuration.
+  extensionManaged:
+    requires:
+      connection: true
+      kinds: [mysql, mariadb, postgresql]
+  authModes:
+    - name: APIKey
+      credentials:
+        required: [apiKey]
+  destinationParametersSchema:
+    openAPIV3Schema:
+      type: object
+      additionalProperties: false
+      properties:
+        region:
+          type: string
+          description: Where the Releem account stores its data.
+          enum: [US, EU]
+          default: US
+        hostnamePrefix:
+          type: string
+          description: Put before every server name the agents report, to tell clusters apart in one Releem account.
+          pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?-?$'
+          maxLength: 32
+  instanceParametersSchema:
+    openAPIV3Schema:
+      type: object
+      additionalProperties: false
+      properties:
+        queryOptimization:
+          type: boolean
+          description: Collect query samples and EXPLAIN plans for Releem's query recommendations.
+          default: false
+  uiSchema:
+    destination:
+      componentsOrder: [region, hostnamePrefix]
+      components:
+        region:
+          path: parameters.region
+          uiType: select
+          fieldParams:
+            label: Releem region
+            defaultValue: US
+            options:
+              - {label: US, value: US}
+              - {label: EU, value: EU}
+        hostnamePrefix:
+          path: parameters.hostnamePrefix
+          uiType: text
+          fieldParams:
+            label: Server name prefix
+            placeholder: prod-
+            helperText: Optional. Tells clusters apart in one Releem account.
+    credentials:
+      APIKey:
+        componentsOrder: [apiKey]
+        components:
+          apiKey:
+            path: apiKey
+            uiType: text
+            fieldParams:
+              label: Releem API key
+              type: password
+              helperText: From Releem, Settings → API key.
+            validation:
+              required: true
+    instance:
+      componentsOrder: [queryOptimization]
+      components:
+        queryOptimization:
+          path: parameters.queryOptimization
+          uiType: toggle
+          fieldParams:
+            label: Query optimization
+            helperText: Collect query samples and EXPLAIN plans.
+{{- end }}
