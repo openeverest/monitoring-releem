@@ -113,7 +113,7 @@ manages, and its RBAC has no access to Secrets.
 
 Run on LKE (Kubernetes 1.37) with OpenEverest `2.0.0-alpha.1`, provider-cloudnative-pg with
 the connection contract (branch `experiment/monitor-connections`) and releem-agent `1.26.2`.
-No Releem account was available, so the API key was a placeholder.
+Releem was reached with a free-plan account.
 
 | Check | Result |
 |---|---|
@@ -127,8 +127,9 @@ No Releem account was available, so the API key was a placeholder.
 | Database pod recreated with a new IP → agent re-rendered | ✅ |
 | Entry removed → agents deleted, role dropped in PostgreSQL, Secret deleted, sources cleared | ✅ |
 | Entry added again → role re-created from `ensure: absent` | ✅ |
+| Real API key → both servers (`lke-exp-pg1-1.demo`, `lke-exp-pg1-2.demo`) report metrics and download recommended configuration | ✅ `Database Metrics are saved` every minute |
+| Query analytics | ⚠️ rejected by Releem for a free plan (`403 The user has a free plan`); EXPLAIN on the replica fails in the agent (`cannot set transaction read-write mode during recovery`) |
 | Wrong API key | ⚠️ the agent logs `403 User not found`; the destination stays `Ready` |
-| Data in Releem | ⚠️ not verified without an account |
 
 Footprint: the agent used 17 MiB, the controller 19 MiB.
 
@@ -159,9 +160,12 @@ Footprint: the agent used 17 MiB, the controller 19 MiB.
    was not verifiable without an account; Releem's own Kubernetes guide uses a PVC.
 7. **The agent image runs as root** and writes to its root filesystem, so it does not pass
    the Pod Security `restricted` profile.
-8. **Applying recommendations is out of scope.** Releem's "apply" restarts the server and
+8. **EXPLAIN on replicas fails in the agent.** It opens a read-write transaction for EXPLAIN,
+   which a hot standby refuses. Agents of replicas could run with query optimization off, or
+   Releem could fix the agent.
+9. **Applying recommendations is out of scope.** Releem's "apply" restarts the server and
    writes configuration files; in OpenEverest it would be an Instance edit by the user.
-9. **Provider cleanup lesson.** Deleting the monitor Secret needs `delete` on Secrets in the
+10. **Provider cleanup lesson.** Deleting the monitor Secret needs `delete` on Secrets in the
    provider's RBAC. Without it the whole Sync failed and the Instance went `Ready=False`, so
    cleanup errors in monitoring code should probably not fail Sync.
 
