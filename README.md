@@ -24,8 +24,8 @@ so recommendations are applied through the Instance, never by the agent.
 
 > [!IMPORTANT]
 > **This extension is not standalone.** It requires an OpenEverest installation and a provider
-> whose component types declare `connection: Supported`. Today that is the CloudNativePG
-> provider on its `experiment/monitor-connections` branch.
+> whose component types declare `connection: Supported`. Today those are the CloudNativePG
+> and Percona XtraDB Cluster providers on their `experiment/monitor-connections` branches.
 
 ## How it fits
 
@@ -50,14 +50,17 @@ flowchart LR
    `pg_monitor` and `pg_read_all_data`) and publishes its Instance-owned Secret under the
    `monitor` credential profile, with a connection endpoint (pod selector, container, port,
    TLS). When the last such binding goes, it drops the user and deletes the Secret.
-4. **Agents.** For every accepted binding, the controller applies one Deployment per running
+4. **Agents.** For every accepted binding, the controller applies one Deployment per ready
    database pod, named `<binding>-<pod>` and owned by the binding. The agent connects to the
    pod's address directly, so Releem sees every server of the Instance. The API key and the
    database login reach it as `secretKeyRef` environment variables: the controller never reads
-   a Secret. Agents follow pods: a new address re-renders the agent, a pod that is gone loses
-   its agent, and removing the Instance entry garbage-collects them all. On PostgreSQL a
-   liveness probe logs in with the agent's own environment every minute: after a password
-   rotation it fails, and the restarted container reads the new password from the Secret.
+   a Secret. Agents follow pods: a pod gets its agent once it is ready (a PXC node still
+   joining refuses connections, and a starting agent exits), the agent of a pod that turns
+   unready is left as it is, a new address re-renders it once the pod is ready again, a pod
+   that is gone loses its agent, and removing the Instance entry garbage-collects them all. A
+   liveness probe (`psql` or `mariadb`, both in the agent image) logs in with the agent's own
+   environment every minute: after a password rotation it fails, and the restarted container
+   reads the new password from the Secret.
 5. **Status.** The binding is `Configured` once every agent runs, `AgentNotReady` while one
    does not, and `EndpointNotServing` while the Instance publishes no connections.
 
@@ -111,13 +114,14 @@ manages, and its RBAC has no access to Secrets.
 
 ## Experiment results
 
-Run on LKE (Kubernetes 1.37) with OpenEverest `2.0.0-alpha.1`, provider-cloudnative-pg with
-the connection contract (branch `experiment/monitor-connections`) and releem-agent `1.26.2`.
+Run on LKE (Kubernetes 1.37) with OpenEverest `2.0.0-alpha.1`, provider-cloudnative-pg and
+provider-percona-xtradb-cluster with the connection contract (branches
+`experiment/monitor-connections`) and releem-agent `1.26.2`.
 Releem was reached with a real account, first on the free plan, then on a paid one.
 
 | Check | Result |
 |---|---|
-| Core computes compatibility with no core change | ✅ CNPG `ExtensionManaged`, `None`; PSMDB `KindUnsupported` |
+| Core computes compatibility with no core change | ✅ CNPG and PXC `ExtensionManaged`, `None`; PSMDB `KindUnsupported` |
 | Provider creates `openeverest_monitor` (`pg_monitor`, `pg_read_all_data`, 30 connections) as a CNPG managed role | ✅ Instance-owned `basic-auth` Secret, published under `monitor` |
 | Connection endpoint published with TLS required (`tls.mode: requireTLS`) | ✅ |
 | Agent logs in over TLS and collects from every database | ✅ `postgres` and `app` |
@@ -129,6 +133,9 @@ Releem was reached with a real account, first on the free plan, then on a paid o
 | Entry added again → role re-created from `ensure: absent` | ✅ |
 | Real API key → both servers (`lke-exp-pg1-1.demo`, `lke-exp-pg1-2.demo`) report metrics and download recommended configuration | ✅ `Database Metrics are saved` every minute |
 | Query analytics (paid plan) | ✅ `Database metrics for Query Analytics are saved` from both servers; on a free plan Releem answers `403 The user has a free plan`. EXPLAIN on the replica fails in the agent (`cannot set transaction read-write mode during recovery`) |
+| PXC 8.4 (3 nodes): provider publishes the operator's `monitor` user; one agent per node logs in over TLS (`TLS_AES_256_GCM_SHA384`), sends metrics and query analytics | ✅ |
+| PXC node deleted → rejoins with a new IP; its agent waits for it to be ready, then follows it | ✅ no agent restart |
+| After restarts, Releem answered `404 Server not found` for 3 of 5 servers that had reported before (same hostnames) | ⚠️ unexplained, see below |
 | Wrong API key | ⚠️ the agent logs `403 User not found`; the destination stays `Ready` |
 
 Footprint: the agent used 17 MiB, the controller 19 MiB.
@@ -138,8 +145,9 @@ Footprint: the agent used 17 MiB, the controller 19 MiB.
 1. **No core change is needed.** The connection contract (`connection: Supported`,
    `RequiredSources.Connections`, `monitor` profile, `connections[]`) carried everything. The
    provider side was about 150 lines in CloudNativePG, using its managed roles. No provider on
-   `main` publishes connections yet, so every MySQL and PostgreSQL provider needs the same work
-   (Percona XtraDB Cluster is the natural next one: its operator already has a `monitor` user).
+   `main` publishes connections yet, so every MySQL and PostgreSQL provider needs the same work.
+   Percona XtraDB Cluster took about 100 lines: its operator's `monitor` user, which PMM
+   already uses, is copied into an Instance-owned Secret, since the users Secret holds root.
 2. **A wrong API key looks Ready.** Releem has no key-check endpoint, the controller must not
    read the key, and the agent keeps running after a `403`, reporting it only in its log.
    Options: ask Releem for an agent health endpoint or a non-zero exit on an invalid key, or
@@ -156,8 +164,12 @@ Footprint: the agent used 17 MiB, the controller 19 MiB.
    connection endpoint (a headless Service) would remove that, and would let a restarted pod
    keep its agent.
 6. **Agent state is an emptyDir.** The agent keeps the server version and downloaded
-   configuration in `/opt/releem/conf`. Whether a restarted agent re-registers the same server
-   was not verifiable without an account; Releem's own Kubernetes guide uses a PVC.
+   configuration in `/opt/releem/conf`, and identifies its server by API key and hostname
+   only. Restarted agents mostly kept reporting, but after a round of restarts Releem answered
+   `404 Server not found` for three servers that had reported under the same hostnames
+   minutes before, while two others kept working. Whether that comes from the account (server
+   limit, removal in the dashboard) or from the lost state needs Releem's input; their own
+   Kubernetes guide keeps `/opt/releem/conf` on a PVC.
 7. **The agent image runs as root** and writes to its root filesystem, so it does not pass
    the Pod Security `restricted` profile.
 8. **EXPLAIN on replicas fails in the agent.** It opens a read-write transaction for EXPLAIN,

@@ -214,17 +214,17 @@ func apiKeySecret(dst *monitoringv1alpha1.MonitoringDestination) (string, error)
 // agent keeps its sessions across a password rotation and only fails on its
 // next reconnect; the probe fails as soon as the rotated password is in
 // effect, and the restarted container reads the new one from the Secret.
-// It is nil for MySQL, whose client options are not verified yet.
 func loginProbe(family engineFamily) *corev1.Probe {
-	if family != familyPostgreSQL {
-		return nil
-	}
+	command := map[engineFamily]string{
+		familyPostgreSQL: `PGPASSWORD="$RELEEM_PG_PASSWORD" PGCONNECT_TIMEOUT=5 PGSSLMODE="$([ "$RELEEM_PG_SSL_MODE" = true ] && echo require || echo prefer)" ` +
+			`psql -h "$RELEEM_PG_HOST" -p "$RELEEM_PG_PORT" -U "$RELEEM_PG_LOGIN" -d postgres -tAc 'SELECT 1' >/dev/null`,
+		// The agent image ships the MariaDB client; like the agent, it
+		// encrypts without verifying the server.
+		familyMySQL: `MYSQL_PWD="$DB_PASSWORD" mariadb --connect-timeout=5 -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" ` +
+			`$([ "$DB_SSL" = true ] && echo --ssl --skip-ssl-verify-server-cert || echo --skip-ssl) -NBe 'SELECT 1' >/dev/null`,
+	}[family]
 	return &corev1.Probe{
-		ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{
-			"sh", "-c",
-			`PGPASSWORD="$RELEEM_PG_PASSWORD" PGCONNECT_TIMEOUT=5 PGSSLMODE="$([ "$RELEEM_PG_SSL_MODE" = true ] && echo require || echo prefer)" ` +
-				`psql -h "$RELEEM_PG_HOST" -p "$RELEEM_PG_PORT" -U "$RELEEM_PG_LOGIN" -d postgres -tAc 'SELECT 1' >/dev/null`,
-		}}},
+		ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"sh", "-c", command}}},
 		InitialDelaySeconds: 30,
 		PeriodSeconds:       60,
 		TimeoutSeconds:      10,

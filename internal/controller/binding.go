@@ -106,12 +106,13 @@ func (r *bindingReconciler) render(ctx context.Context, b *monitoringv1alpha1.Mo
 		}, r.pruneStale(ctx, b, nil)
 	}
 
-	agents, res, err := r.renderAgents(ctx, agentInput{binding: b, destination: dst, dstParams: dstParams, instParams: instParams, sources: sources})
+	agents, held, res, err := r.renderAgents(ctx, agentInput{binding: b, destination: dst, dstParams: dstParams, instParams: instParams, sources: sources})
 	if err != nil || res != nil {
 		return deref(res), err
 	}
 
-	names := make([]string, 0, len(agents))
+	names := make([]string, 0, len(agents)+len(held))
+	names = append(names, held...)
 	for _, agent := range agents {
 		u, err := toUnstructured(agent)
 		if err != nil {
@@ -133,40 +134,60 @@ func (r *bindingReconciler) render(ctx context.Context, b *monitoringv1alpha1.Mo
 	if len(names) == 0 {
 		return renderResult{
 			reason:  monitoringv1alpha1.ReasonEndpointNotServing,
-			message: fmt.Sprintf("no running database pod of Instance %s yet", in.Name),
+			message: fmt.Sprintf("no ready database pod of Instance %s yet", in.Name),
 			requeue: agentStartingRecheck,
 		}, nil
 	}
 	return r.agentsReadiness(ctx, b, names)
 }
 
-// renderAgents renders one agent per running pod of every connection
-// endpoint; a non-nil result reports why they cannot be rendered.
-func (r *bindingReconciler) renderAgents(ctx context.Context, base agentInput) ([]*appsv1.Deployment, *renderResult, error) {
+// renderAgents renders one agent per ready pod of every connection
+// endpoint, and returns the names of the live agents it holds unchanged for
+// pods that are running but not ready; a non-nil result reports why they
+// cannot be rendered.
+func (r *bindingReconciler) renderAgents(ctx context.Context, base agentInput) ([]*appsv1.Deployment, []string, *renderResult, error) {
 	b := base.binding
+	live, err := r.ownedAgents(ctx, b)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	agentOfPod := make(map[string]string, len(live))
+	for i := range live {
+		agentOfPod[live[i].Labels[agentPodLabel]] = live[i].Name
+	}
+	var held []string
 	var agents []*appsv1.Deployment
 	for _, ep := range base.sources.Connections {
 		if ep.PodSelector[monitoringv1alpha1.BindingInstanceLabel] != b.Spec.InstanceRef.Name {
 			res := failed(fmt.Sprintf("component %q: pod selector does not select %s=%s",
 				ep.Component, monitoringv1alpha1.BindingInstanceLabel, b.Spec.InstanceRef.Name))
-			return nil, &res, nil
+			return nil, nil, &res, nil
 		}
 		pods, err := r.servingPods(ctx, b.Namespace, ep.PodSelector)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		for i := range pods {
+			// A node still joining refuses connections and a starting agent
+			// exits: render an agent only for a ready pod, and leave the live
+			// agent of an unready one as it is, even if its address changed.
+			if !podReady(&pods[i]) {
+				if name, ok := agentOfPod[pods[i].Name]; ok {
+					held = append(held, name)
+				}
+				continue
+			}
 			in := base
 			in.endpoint, in.pod = ep, &pods[i]
 			agent, err := agentFor(in, r.agent)
 			if err != nil {
 				res := failed(fmt.Sprintf("Instance %s: %v", b.Spec.InstanceRef.Name, err))
-				return nil, &res, nil
+				return nil, nil, &res, nil
 			}
 			agents = append(agents, agent)
 		}
 	}
-	return agents, nil, nil
+	return agents, held, nil, nil
 }
 
 func deref(res *renderResult) renderResult {
@@ -181,7 +202,7 @@ func failed(message string) renderResult {
 }
 
 // servingPods are the running pods selector matches; an agent needs the
-// pod's address.
+// pod's address. Whether a pod is ready is decided per agent.
 func (r *bindingReconciler) servingPods(ctx context.Context, namespace string, selector map[string]string) ([]corev1.Pod, error) {
 	list := &corev1.PodList{}
 	if err := r.client.List(ctx, list, client.InNamespace(namespace), client.MatchingLabels(selector)); err != nil {
@@ -192,6 +213,15 @@ func (r *bindingReconciler) servingPods(ctx context.Context, namespace string, s
 	})
 	slices.SortFunc(pods, func(a, b corev1.Pod) int { return strings.Compare(a.Name, b.Name) })
 	return pods, nil
+}
+
+func podReady(p *corev1.Pod) bool {
+	for _, c := range p.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 // agentsReadiness reports Configured once every agent runs.

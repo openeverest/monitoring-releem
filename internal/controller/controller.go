@@ -194,8 +194,8 @@ func sourcesChanged() predicate.Funcs {
 	}
 }
 
-// podAddressChanged passes pods appearing, going and changing the address
-// or phase agents connect by.
+// podAddressChanged passes pods appearing, going and changing the address,
+// phase or readiness agents depend on.
 func podAddressChanged() predicate.Funcs {
 	return predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
@@ -203,6 +203,7 @@ func podAddressChanged() predicate.Funcs {
 			newPod, okNew := e.ObjectNew.(*corev1.Pod)
 			return okOld && okNew && (oldPod.Status.PodIP != newPod.Status.PodIP ||
 				oldPod.Status.Phase != newPod.Status.Phase ||
+				podReady(oldPod) != podReady(newPod) ||
 				oldPod.DeletionTimestamp.IsZero() != newPod.DeletionTimestamp.IsZero())
 		},
 	}

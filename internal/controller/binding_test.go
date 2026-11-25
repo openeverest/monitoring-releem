@@ -153,7 +153,10 @@ func dbPod(name, ip string, port int32) *corev1.Pod {
 				Resources: corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("2Gi")}},
 			},
 		}},
-		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: ip},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning, PodIP: ip,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+		},
 	}
 }
 
@@ -259,7 +262,9 @@ func TestReconcileRendersMySQLAgents(t *testing.T) {
 	assert.Equal(t, "false", env["RELEEM_QUERY_OPTIMIZATION"].Value)
 	assert.NotContains(t, env, "RELEEM_REGION", "US is the agent's default")
 	assert.NotContains(t, env, "RELEEM_PG_HOST")
-	assert.Nil(t, liveAgents(t, c)[testBindingName+"-orders-1"].Spec.Template.Spec.Containers[0].LivenessProbe)
+	probe := liveAgents(t, c)[testBindingName+"-orders-1"].Spec.Template.Spec.Containers[0].LivenessProbe
+	require.NotNil(t, probe)
+	assert.Contains(t, probe.Exec.Command[2], `mariadb --connect-timeout=5 -h "$DB_HOST"`)
 }
 
 func TestReconcileFollowsThePods(t *testing.T) {
@@ -334,4 +339,31 @@ func TestAgentNameFitsPodNames(t *testing.T) {
 	assert.LessOrEqual(t, len(long), maxAgentName)
 	assert.NotEqual(t, long, agentName(strings.Repeat("b", 60), "orders-2"))
 	assert.Equal(t, "b-p", agentName("b", "p"))
+}
+
+func TestReconcileWaitsForANodeToBeReadyButKeepsRunningAgents(t *testing.T) {
+	t.Parallel()
+	joining := dbPod("orders-2", "10.0.0.2", 5432)
+	joining.Status.Conditions[0].Status = corev1.ConditionFalse
+	c := newFakeClient(t, testClass(), testDestination(""), testInstance(connection("mysql", false)), testBinding(""),
+		dbPod("orders-1", "10.0.0.1", 3306), joining)
+
+	reconcileBinding(t, c)
+	agents := liveAgents(t, c)
+	require.Len(t, agents, 1, "a node still joining the cluster refuses connections")
+	assert.Contains(t, agents, testBindingName+"-orders-1")
+
+	rejoining := &corev1.Pod{}
+	require.NoError(t, c.Get(t.Context(), client.ObjectKey{Namespace: testNamespace, Name: "orders-1"}, rejoining))
+	rejoining.Status.Conditions[0].Status = corev1.ConditionFalse
+	rejoining.Status.PodIP = "10.0.0.9"
+	require.NoError(t, c.Status().Update(t.Context(), rejoining))
+	reconcileBinding(t, c)
+	held := liveAgents(t, c)[testBindingName+"-orders-1"]
+	assert.Equal(t, "10.0.0.1", envOf(held)["DB_HOST"].Value, "the agent of a rejoining node is left as it is")
+
+	rejoining.Status.Conditions[0].Status = corev1.ConditionTrue
+	require.NoError(t, c.Status().Update(t.Context(), rejoining))
+	reconcileBinding(t, c)
+	assert.Equal(t, "10.0.0.9", envOf(liveAgents(t, c)[testBindingName+"-orders-1"])["DB_HOST"].Value, "and follows it once it is ready")
 }
