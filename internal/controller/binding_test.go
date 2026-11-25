@@ -36,6 +36,7 @@ import (
 	common "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
+	contractmonitoring "github.com/openeverest/openeverest/v2/contract/monitoring"
 	"github.com/openeverest/openeverest/v2/provider-runtime/monitoring"
 )
 
@@ -96,7 +97,7 @@ func testBinding(parameters string) *monitoringv1alpha1.MonitoringBinding {
 	b := &monitoringv1alpha1.MonitoringBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: testBindingName, Namespace: testNamespace, UID: testBindingUID, Generation: 1,
-			Labels: monitoring.BindingLabels("orders", "releem", "releem", "releem"),
+			Labels: contractmonitoring.BindingLabels("orders", "releem", "releem", "releem"),
 		},
 		Spec: monitoringv1alpha1.MonitoringBindingSpec{
 			InstanceRef:    common.ObjectRef{Name: "orders"},
