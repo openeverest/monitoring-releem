@@ -1,0 +1,21 @@
+apiVersion: v2
+name: monitoring-releem
+description: OpenEverest monitoring extension for Releem. Ships the MonitoringClass and its controller.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - openeverest
+  - monitoring
+  - extension
+  - releem
+  - mysql
+  - postgresql
+home: https://github.com/openeverest/monitoring-releem
+sources:
+  - https://github.com/openeverest/monitoring-releem
+maintainers:
+  - name: OpenEverest Contributors
+annotations:
+  openeverest.io/extension-type: monitoring
+# OpenEverest (controller + CRDs) must be installed before this chart.
