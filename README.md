@@ -33,6 +33,10 @@ so recommendations are applied through the Instance, never by the agent.
 |---|---|---|
 | `0.1.x` | `2.0.0-alpha.1` | `1.26.2` |
 
+The chart and its `MonitoringClass` carry the annotation `openeverest.io/contract-version`, the
+contract version of the OpenEverest the controller is built against. It names the oldest
+OpenEverest the build works with.
+
 ## How it fits
 
 ```mermaid
@@ -114,6 +118,7 @@ kubectl get monitoringclass releem
 | `class.name` | `releem` | Name of the class |
 | `class.controllerName` | `openeverest.io/monitoring-releem` | Controller name the class is claimed by |
 | `agent.image` | `releem/releem-agent:1.26.2` | Agent image |
+| `compatibility.acknowledge.coreVersion` | `""` | OpenEverest release on which to run this build although it does not support it, such as `2.0.0` |
 
 The controller caches only pods labelled `core.openeverest.io/instance` and the Deployments it
 manages, and its RBAC has no access to Secrets.
@@ -193,6 +198,8 @@ Footprint: the agent used 17 MiB, the controller 19 MiB.
 make test-unit   # unit tests
 make lint        # golangci-lint
 make helm-lint   # chart lint
+make generate    # stamp the chart with the OpenEverest contract version
+make verify      # fail on stale generated files or a missing stamp
 make run         # run against the current kubeconfig
 ```
 
