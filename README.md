@@ -27,6 +27,12 @@ so recommendations are applied through the Instance, never by the agent.
 > whose component types declare `connection: Supported`. Today those are the CloudNativePG
 > and Percona XtraDB Cluster providers on their `experiment/monitor-connections` branches.
 
+## Compatibility
+
+| monitoring-releem | OpenEverest | releem-agent |
+|---|---|---|
+| `0.1.x` | `2.0.0-alpha.1` | `1.26.2` |
+
 ## How it fits
 
 ```mermaid
