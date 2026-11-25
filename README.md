@@ -113,7 +113,7 @@ manages, and its RBAC has no access to Secrets.
 
 Run on LKE (Kubernetes 1.37) with OpenEverest `2.0.0-alpha.1`, provider-cloudnative-pg with
 the connection contract (branch `experiment/monitor-connections`) and releem-agent `1.26.2`.
-Releem was reached with a free-plan account.
+Releem was reached with a real account, first on the free plan, then on a paid one.
 
 | Check | Result |
 |---|---|
@@ -128,7 +128,7 @@ Releem was reached with a free-plan account.
 | Entry removed → agents deleted, role dropped in PostgreSQL, Secret deleted, sources cleared | ✅ |
 | Entry added again → role re-created from `ensure: absent` | ✅ |
 | Real API key → both servers (`lke-exp-pg1-1.demo`, `lke-exp-pg1-2.demo`) report metrics and download recommended configuration | ✅ `Database Metrics are saved` every minute |
-| Query analytics | ⚠️ rejected by Releem for a free plan (`403 The user has a free plan`); EXPLAIN on the replica fails in the agent (`cannot set transaction read-write mode during recovery`) |
+| Query analytics (paid plan) | ✅ `Database metrics for Query Analytics are saved` from both servers; on a free plan Releem answers `403 The user has a free plan`. EXPLAIN on the replica fails in the agent (`cannot set transaction read-write mode during recovery`) |
 | Wrong API key | ⚠️ the agent logs `403 User not found`; the destination stays `Ready` |
 
 Footprint: the agent used 17 MiB, the controller 19 MiB.
