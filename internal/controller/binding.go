@@ -31,6 +31,7 @@ import (
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
+	contractmonitoring "github.com/openeverest/openeverest/v2/contract/monitoring"
 	"github.com/openeverest/openeverest/v2/provider-runtime/monitoring"
 )
 
@@ -58,7 +59,7 @@ func (r *bindingReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	var res renderResult
 	var err error
-	if monitoring.IsAccepted(b) {
+	if contractmonitoring.IsAccepted(b) {
 		res, err = r.render(ctx, b)
 	} else {
 		res.reason, res.message, err = r.notAcceptedReason(ctx, b)
